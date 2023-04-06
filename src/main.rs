@@ -4,7 +4,7 @@ use array2d::Array2D;
 use rand::{thread_rng, Rng};
 pub mod array2d;
 
-fn main() {
+fn main() {    
     // Ordem da matriz
     let n = 2;
 

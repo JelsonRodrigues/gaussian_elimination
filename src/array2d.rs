@@ -48,15 +48,15 @@ impl<T> Array2D<T> {
     }
 
     pub fn rows_len(&self) -> usize {
-        return self.columns;
-    }
-
-    pub fn columns_len(&self) -> usize {
         return self.rows;
     }
 
+    pub fn columns_len(&self) -> usize {
+        return self.columns;
+    }
+
     fn get_index(&self, row:usize, column:usize) -> usize {
-        return row * self.rows + column;
+        return row * self.columns + column;
     }
     fn check_values(&self, row:usize, column:usize) -> bool {
         return row < self.rows && column < self.columns;
@@ -116,7 +116,7 @@ where T:Clone
 {
     type Item = Vec<T>;
 
-    fn next(&mut self) -> Option<Vec<T>> {
+    fn next(&mut self) -> Option<Self::Item> {
         let result = {
             if self.index >= self.array.rows_len() {
                 None
@@ -157,7 +157,7 @@ where T:Clone
 {
     type Item = &'a [T];
 
-    fn next(&mut self) -> Option<&'a [T]> {
+    fn next(&mut self) -> Option<Self::Item> {
         let result = {
             if self.index >= self.array.rows_len() {
                 None
@@ -187,3 +187,44 @@ where T:Clone
     }
     
 }
+
+// pub struct Array2DIteratorMut<'a, T> {
+//     array : &'a mut Array2D<T>,
+//     index : usize
+// }
+
+// impl<'a, T> Iterator for Array2DIteratorMut<'a, T>
+// where T:Clone
+// {
+//     type Item = &'a mut [T];
+
+//     fn next(&mut self) -> Option<Self::Item> {
+//         let result = {
+//             if self.index >= self.array.rows_len() {
+//                 None
+//             }
+//             else
+//             {
+//                 Some(&mut self.array[self.index])
+//             }
+//         };
+//         self.index += 1;
+//         return result;
+//     }
+// }
+
+
+// impl<'a, T> IntoIterator for &'a mut Array2D<T> 
+// where T:Clone
+// {
+//     type Item = &'a mut [T];
+//     type IntoIter = Array2DIteratorMut<'a, T>;
+
+//     fn into_iter(self) -> Self::IntoIter {
+//         Array2DIteratorMut {
+//             array: self,
+//             index: 0
+//         }
+//     }
+    
+// }

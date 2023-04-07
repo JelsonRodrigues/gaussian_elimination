@@ -1,6 +1,5 @@
 use std::{ops::{Index, IndexMut}, fmt::{Display, Debug}};
 
-
 pub struct Array2D<T>{
     vec:Vec<T>,
     columns:usize,

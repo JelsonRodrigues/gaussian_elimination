@@ -1,8 +1,10 @@
-use std::ops::IndexMut;
+use std::{ops::IndexMut, thread::JoinHandle};
 
 use array2d::Array2D;
+use linearsystem::LinearSystem;
 use rand::{thread_rng, Rng};
 pub mod array2d;
+pub mod linearsystem;
 
 fn main() {    
     // Ordem da matriz
@@ -98,4 +100,29 @@ fn gauss_solver(A:&mut Array2D<f64>, B:&mut Vec<f64>, X:&mut Vec<f64>) {
         }
         X[row] /= A[row][row];
     }
+}
+
+fn gauss_multithread(A:&mut Array2D<f64>, B:&mut Vec<f64>, X:&mut Vec<f64>) {
+    let threads: Vec<JoinHandle<(usize, f64)>> = Vec::new();
+
+    for index in 0..A.columns_len() {
+        let base = &A[index];
+        for row in (index + 1)..A.columns_len() {
+            let row_change = &mut A[row];
+            let therad = std::thread::spawn(move || {
+                row_solve(base, index, row_change, B[index],&mut B[row])
+            });
+
+        }
+    } 
+}
+
+fn row_solve(base_row:&[f64], index_column:usize, row_changing:&mut [f64], base_res:f64, changing_res:&mut f64) -> (usize, f64) {
+    let multiplier = row_changing[index_column] / base_row[index_column];
+
+    for ind in index_column..row_changing.len(){
+        row_changing[ind] -= base_row[ind] * multiplier;
+    }
+    *changing_res -= base_res * multiplier;
+    return (index_column, multiplier);
 }

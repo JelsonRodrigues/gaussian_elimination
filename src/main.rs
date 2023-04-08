@@ -1,14 +1,11 @@
-use std::{ops::IndexMut, thread::JoinHandle};
-
-use array2d::Array2D;
-use linearsystem::LinearSystem;
 use rand::{thread_rng, Rng};
+use std::{thread, thread::JoinHandle};
 pub mod array2d;
 pub mod linearsystem;
 
-fn main() {    
+fn main() {
     // Ordem da matriz
-    let n = 2;
+    let n = 5000;
 
     // Eliminação gaussiana é para resolver sistema onde
     // A * X = B
@@ -21,21 +18,20 @@ fn main() {
 
     let (mut A, mut B, mut X) = create_values(n);
 
-
     // Teste rápido
     /*
     Sistema:
     2x + 3y = 10
     1x + 4y = 10
-    
+
     A
     |2, 3|
     |1, 4|
 
     B = |10, 10|
-    
+
     Resultado esperado de A*X=B
-    X = |2, 2| 
+    X = |2, 2|
      */
 
     A[0][0] = 2.0;
@@ -46,44 +42,53 @@ fn main() {
     B[0] = 10.0;
     B[1] = 10.0;
 
-    for linha in &A {
-        println!("{:?}", linha);
-    }
-    println!("B: {:?}", B);
+    println!("------- Normal -------");
+    println!("------- Antes -------");
+    A[0][0] = 2.0;
+    A[0][1] = 3.0;
+    A[1][0] = 1.0;
+    A[1][1] = 4.0;
+
+    B[0] = 10.0;
+    B[1] = 10.0;
+
+    X[0] = 0.0;
+    X[1] = 0.0;
+
+    gauss_solver_with_unsafe(&mut A, &mut B, &mut X);
+
+    // for linha in &A {
+    //     println!("{:?}", linha);
+    // }
+    // println!("B: {:?}", B);
     println!("X: {:?}", X);
-
-    gauss_solver(&mut A, &mut B, &mut X);
-
-    
-    for linha in &A {
-        println!("{:?}", linha);
-    }
-    println!("B: {:?}", B);
-    println!("X: {:?}", X);
-
 }
 
 // Create the A, B and X values
-fn create_values(n:usize) -> (Array2D<f64>, Vec<f64>, Vec<f64>) {
-    let mut A:Array2D<f64> = Array2D::new(n, n);
-    let mut B:Vec<f64> = vec![0.0;n];
-    let mut X:Vec<f64> = vec![0.0;n];
-
+fn create_values(n: usize) -> (Vec<Vec<f64>>, Vec<f64>, Vec<f64>) {
     let mut random = thread_rng();
+    let mut A: Vec<Vec<f64>> = Vec::new();
+    let mut B: Vec<f64> = vec![0.0; n];
+    let mut X: Vec<f64> = vec![0.0; n];
 
-    for row in 0..A.rows_len() {
-        random.try_fill(A.index_mut(row)).expect("Erro ao preencher A");
+    for row in 0..n {
+        let mut temp = vec![0.0; n];
+        random.try_fill(&mut temp[..]);
+        A.push(temp);
     }
-    random.try_fill(&mut B[..]).expect("Erro ao preencher vetor B");
+
+    random.try_fill(&mut B[..]);
+    random.try_fill(&mut X[..]);
     return (A, B, X);
 }
 
+/*
+This function is based on the original https://github.com/gmendonca/gaussian-elimination-pthreads-openmp/blob/master/gauss.c
+ */
+fn gauss_solver(A: &mut Vec<Vec<f64>>, B: &mut Vec<f64>, X: &mut Vec<f64>) {
+    let N = A.len();
 
-fn gauss_solver(A:&mut Array2D<f64>, B:&mut Vec<f64>, X:&mut Vec<f64>) {
-
-    let N = A.columns_len();
-    
-    for norm in 0..(N-1) {
+    for norm in 0..(N - 1) {
         for row in (norm + 1)..N {
             let multiplier = A[row][norm] / A[norm][norm];
             for col in norm..N {
@@ -95,34 +100,62 @@ fn gauss_solver(A:&mut Array2D<f64>, B:&mut Vec<f64>, X:&mut Vec<f64>) {
 
     for row in (0..N).rev() {
         X[row] = B[row];
-        for col in ((row+1)..N).rev() {
+        for col in ((row + 1)..N).rev() {
             X[row] -= A[row][col] * X[col];
         }
         X[row] /= A[row][row];
     }
 }
 
-fn gauss_multithread(A:&mut Array2D<f64>, B:&mut Vec<f64>, X:&mut Vec<f64>) {
-    let threads: Vec<JoinHandle<(usize, f64)>> = Vec::new();
+fn row_solver(row_normalizing: &mut Vec<f64>, base_row: &Vec<f64>, index: usize) {
+    let multiplier = row_normalizing[index] / base_row[index];
 
-    for index in 0..A.columns_len() {
-        let base = &A[index];
-        for row in (index + 1)..A.columns_len() {
-            let row_change = &mut A[row];
-            let therad = std::thread::spawn(move || {
-                row_solve(base, index, row_change, B[index],&mut B[row])
-            });
-
-        }
-    } 
+    for ind_col in index..row_normalizing.len() {
+        row_normalizing[ind_col as usize] -= multiplier * base_row[ind_col as usize];
+    }
 }
 
-fn row_solve(base_row:&[f64], index_column:usize, row_changing:&mut [f64], base_res:f64, changing_res:&mut f64) -> (usize, f64) {
-    let multiplier = row_changing[index_column] / base_row[index_column];
+fn row_solver_with_simd(row_normalizing: &mut Vec<f64>, base_row: &Vec<f64>, index: usize) {
+    todo!()
+}
 
-    for ind in index_column..row_changing.len(){
-        row_changing[ind] -= base_row[ind] * multiplier;
+/*
+TODO:
+    Create a threadpool and in each iteration of the loop add the tasks to the threadpool
+    and wait for finish execution of current tasks in threadpool before moving to next iteration
+ */
+fn gauss_solver_with_unsafe(A: &mut Vec<Vec<f64>>, B: &mut Vec<f64>, X: &mut Vec<f64>) {
+    let n = A.len();
+
+    for norm_row in 0..n {
+        let mut threads: Vec<JoinHandle<()>> = Vec::new();
+
+        let base_row = unsafe { &*A.as_ptr().offset(norm_row as isize) };
+
+        for ind_row in (norm_row + 1)..n {
+            // This part can be done in a Thread
+            let row_normalizing = unsafe { &mut *A.as_mut_ptr().offset(ind_row as isize) };
+            let multiplier = row_normalizing[norm_row] / base_row[norm_row];
+
+            let thread = thread::spawn(move || {
+                row_solver(row_normalizing, base_row, norm_row);
+            });
+            threads.push(thread);
+
+            B[ind_row] -= multiplier * B[norm_row];
+        }
+
+        // wait for threads to finish
+        for thread in threads {
+            thread.join().unwrap();
+        }
     }
-    *changing_res -= base_res * multiplier;
-    return (index_column, multiplier);
+
+    for row in (0..n).rev() {
+        X[row] = B[row];
+        for col in ((row + 1)..n).rev() {
+            X[row] -= A[row][col] * X[col];
+        }
+        X[row] /= A[row][row];
+    }
 }

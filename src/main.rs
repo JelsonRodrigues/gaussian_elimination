@@ -1,16 +1,19 @@
 use rand::{thread_rng, Rng, distributions::uniform::SampleBorrow, rngs::StdRng, SeedableRng};
-use std::{thread, thread::JoinHandle, time::{Instant, Duration}};
+use std::{thread, thread::JoinHandle, time::{Instant, Duration}, ops::Range};
 
 fn main() {
     // Ordem da matriz
-    let n = 1500;
+    let n = 3000;
 
     let (mut A, mut B, mut X) = create_values(n);
+    // let (mut A, mut B, mut X) = create_values_array2d(n);
 
     let before = Instant::now();
+    gauss_solver_with_thread_pool_chunks(&mut A, &mut B, &mut X);
     // gauss_solver_with_threads(&mut A, &mut B, &mut X);
     // gauss_solver(&mut A, &mut B, &mut X);
-    gauss_solver_with_futures(&mut A, &mut B, &mut X);
+    // gauss_solver_Array2D(&mut A, &mut B, &mut X);
+    // gauss_solver_with_futures(&mut A, &mut B, &mut X);
     // gauss_solver_with_thread_pool(&mut A, &mut B, &mut X);
     let now = Instant::now();
 
@@ -46,11 +49,51 @@ fn create_values(n: usize) -> (Vec<Vec<f64>>, Vec<f64>, Vec<f64>) {
     return (A, B, X);
 }
 
+pub mod array2d;
+use array2d::Array2D;
+fn create_values_array2d(n: usize) -> (Array2D<f64>, Vec<f64>, Vec<f64>) {
+    // let mut random = thread_rng();
+    let mut r = StdRng::seed_from_u64(0);   // Reproducible random sequence
+    let mut A = Array2D::new(n, n);
+    let B: Vec<f64> = vec![1.0; n];
+    let X: Vec<f64> = vec![0.0; n];
+
+    for index in 0..n {
+        r.try_fill(&mut A[index]).unwrap();
+    }
+
+    // random.try_fill(&mut B[..]).unwrap();
+    // random.try_fill(&mut X[..]).unwrap();
+    return (A, B, X);
+}
+
 /*
 This function is based on the original https://github.com/gmendonca/gaussian-elimination-pthreads-openmp/blob/master/gauss.c
  */
 fn gauss_solver(A: &mut Vec<Vec<f64>>, B: &mut Vec<f64>, X: &mut Vec<f64>) {
     let N = A.len();
+
+    for norm in 0..(N - 1) {
+        for row in (norm + 1)..N {
+            let multiplier = A[row][norm] / A[norm][norm];
+            for col in norm..N {
+                A[row][col] -= A[norm][col] * multiplier;
+            }
+            B[row] -= B[norm] * multiplier;
+        }
+    }
+
+    for row in (0..N).rev() {
+        X[row] = B[row];
+        for col in ((row + 1)..N).rev() {
+            X[row] -= A[row][col] * X[col];
+        }
+        X[row] /= A[row][row];
+    }
+}
+
+fn gauss_solver_Array2D(A: &mut Array2D<f64>, B: &mut Vec<f64>, X: &mut Vec<f64>) {
+    let N = A.columns_len();
 
     for norm in 0..(N - 1) {
         for row in (norm + 1)..N {
@@ -78,6 +121,7 @@ fn row_solver(row_normalizing: &mut Vec<f64>, base_row: &Vec<f64>, index: usize)
         row_normalizing[ind_col as usize] -= multiplier * base_row[ind_col as usize];
     }
 }
+
 
 fn row_solver_with_simd(row_normalizing: &mut Vec<f64>, base_row: &Vec<f64>, index: usize) {
     todo!()
@@ -198,5 +242,56 @@ fn gauss_solver_with_thread_pool(A: &mut Vec<Vec<f64>>, B: &mut Vec<f64>, X: &mu
             X[row] -= A[row][col] * X[col];
         }
         X[row] /= A[row][row];
+    }
+}
+
+const MIN_CHUNK_SIZE:usize = 16;
+fn gauss_solver_with_thread_pool_chunks(A: &mut Vec<Vec<f64>>, B: &mut Vec<f64>, X: &mut Vec<f64>) {
+    let total_threads = std::thread::available_parallelism().unwrap().get();
+    let pool = Pool::new(total_threads);
+    let n = A.len();
+    
+    for norm_row in 0..n {
+        let base_row = unsafe { &*A.as_ptr().offset(norm_row as isize) };
+        
+        // Calculate the size of each chunk
+        let chunk_size = if (n - norm_row) / total_threads < MIN_CHUNK_SIZE {MIN_CHUNK_SIZE} else {(n - norm_row) / total_threads};
+        let matrix = A[norm_row+1..].chunks_mut(chunk_size);
+        let b_value = B[norm_row];
+        let result = B[norm_row+1..].chunks_mut(chunk_size);
+
+        pool.scoped(move |scope| {
+            for (chunk, result_chunck) in matrix.zip(result) {
+                scope.execute(move || {
+                    rows_solver(chunk, base_row, norm_row, result_chunck, b_value);
+                });
+            }
+        });
+    }
+
+    pool.shutdown();
+
+    for row in (0..n).rev() {
+        X[row] = B[row];
+        for col in ((row + 1)..n).rev() {
+            X[row] -= A[row][col] * X[col];
+        }
+        X[row] /= A[row][row];
+    }
+}
+
+fn rows_solver(
+    matrix: &mut [Vec<f64>], 
+    base_row: &[f64], 
+    index: usize, 
+    equality_vector:&mut [f64], 
+    eq_vector_base_value:f64
+) {
+    for (i, current_row) in matrix.iter_mut().enumerate() {
+        let multiplier = current_row[index] / base_row[index];
+        for index_col in index..base_row.len() {
+            current_row[index_col] -= multiplier * base_row[index_col];
+        }
+        equality_vector[i] -= multiplier * eq_vector_base_value;
     }
 }

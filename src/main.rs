@@ -3,21 +3,15 @@ use std::{thread, thread::JoinHandle, time::{Instant, Duration}};
 
 fn main() {
     // Ordem da matriz
-    let n = 7;
-
-    // Eliminação gaussiana é para resolver sistema onde
-    // A * X = B
-    // Onde A é uma matriz de ordem N
-    // X é um vetor coluna de N posições
-    // B é o resultado da multiplicação, um vetor de N valores
+    let n = 1500;
 
     let (mut A, mut B, mut X) = create_values(n);
 
-
     let before = Instant::now();
-    // gauss_solver_with_unsafe(&mut A, &mut B, &mut X);
+    // gauss_solver_with_threads(&mut A, &mut B, &mut X);
     // gauss_solver(&mut A, &mut B, &mut X);
     gauss_solver_with_futures(&mut A, &mut B, &mut X);
+    // gauss_solver_with_thread_pool(&mut A, &mut B, &mut X);
     let now = Instant::now();
 
     println!("X: {:?}", X);
@@ -89,12 +83,10 @@ fn row_solver_with_simd(row_normalizing: &mut Vec<f64>, base_row: &Vec<f64>, ind
     todo!()
 }
 
-/*
-TODO:
-    Create a threadpool and in each iteration of the loop add the tasks to the threadpool
-    and wait for finish execution of current tasks in threadpool before moving to next iteration
- */
-fn gauss_solver_with_unsafe(A: &mut Vec<Vec<f64>>, B: &mut Vec<f64>, X: &mut Vec<f64>) {
+// Spawn a thread for each row of the matrix, this is EXTREMALLY bad and slow
+// The overhead of thread creation and scheduling will be greater than
+// any benefits, given that the work each thread has to do is small.
+fn gauss_solver_with_threads(A: &mut Vec<Vec<f64>>, B: &mut Vec<f64>, X: &mut Vec<f64>) {
     let n = A.len();
 
     for norm_row in 0..n {
@@ -130,40 +122,75 @@ fn gauss_solver_with_unsafe(A: &mut Vec<Vec<f64>>, B: &mut Vec<f64>, X: &mut Vec
     }
 }
 
-async fn gauss_solver_with_futures(A: &mut Vec<Vec<f64>>, B: &mut Vec<f64>, X: &mut Vec<f64>) {
+// Spawn a future (tokio green thread) for every row. 
+// Futures overhead are small, so the performance is great.
+use tokio::*;
+fn gauss_solver_with_futures(A: &mut Vec<Vec<f64>>, B: &mut Vec<f64>, X: &mut Vec<f64>) {
     // Tokio runtime starting
-    let tk = tokio::runtime::Builder::new_multi_thread()
+    let tk = runtime::Builder::new_multi_thread()
                             .build()
                             .unwrap();
     let n = A.len();
 
     for norm_row in 0..n {
-        let mut tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+        let mut tasks: Vec<task::JoinHandle<()>> = Vec::new();
 
         let base_row = unsafe { &*A.as_ptr().offset(norm_row as isize) };
 
         for ind_row in (norm_row + 1)..n {
-            // This part can be done in a Thread
             let row_normalizing = unsafe { &mut *A.as_mut_ptr().offset(ind_row as isize) };
             let multiplier = row_normalizing[norm_row] / base_row[norm_row];
 
-            let task = tk.spawn(async move {row_solver(row_normalizing, base_row, norm_row)});
+            let future = tk.spawn(async move {row_solver(row_normalizing, base_row, norm_row)});
             
-            // let thread = thread::spawn(move || {
-            //     row_solver(row_normalizing, base_row, norm_row);
-            // });
-            // threads.push(thread);
-            tasks.push(task);
+            tasks.push(future);
             B[ind_row] -= multiplier * B[norm_row];
         }
 
-        // wait for threads to finish
+        // Wait for all futures to finish
         for task in tasks {
-            // task.await.unwrap();
             tk.block_on(task).unwrap();
         }
     }
     tk.shutdown_background();
+
+    for row in (0..n).rev() {
+        X[row] = B[row];
+        for col in ((row + 1)..n).rev() {
+            X[row] -= A[row][col] * X[col];
+        }
+        X[row] /= A[row][row];
+    }
+}
+
+
+// Use a scoped threadpool. Spawn a thread for every logical core in the machine
+// and then for every row in the matrix, create a job to solve the row, and wait for all jobs to 
+// finish before going to the next row of normalization.
+// Performance is very good.
+extern crate scoped_pool;
+use scoped_pool::Pool;
+fn gauss_solver_with_thread_pool(A: &mut Vec<Vec<f64>>, B: &mut Vec<f64>, X: &mut Vec<f64>) {
+    let total_threads = std::thread::available_parallelism().unwrap().get();
+    let pool = Pool::new(total_threads);
+    let n = A.len();
+
+    for norm_row in 0..n {
+        let base_row = unsafe { &*A.as_ptr().offset(norm_row as isize) };
+        
+        pool.scoped(|scope| {
+            for ind_row in (norm_row + 1)..n {
+                let row_normalizing = unsafe { &mut *A.as_mut_ptr().offset(ind_row as isize) };
+                let multiplier = row_normalizing[norm_row] / base_row[norm_row];
+                
+                scope.execute(move || {row_solver(row_normalizing, base_row, norm_row);});
+                
+                B[ind_row] -= multiplier * B[norm_row];
+            }
+        });
+    }
+
+    pool.shutdown();
 
     for row in (0..n).rev() {
         X[row] = B[row];

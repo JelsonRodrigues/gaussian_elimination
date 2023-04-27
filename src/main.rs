@@ -1,11 +1,9 @@
-use rand::{thread_rng, Rng};
-use std::{thread, thread::JoinHandle};
-pub mod array2d;
-pub mod linearsystem;
+use rand::{thread_rng, Rng, distributions::uniform::SampleBorrow, rngs::StdRng, SeedableRng};
+use std::{thread, thread::JoinHandle, time::{Instant, Duration}};
 
 fn main() {
     // Ordem da matriz
-    let n = 5000;
+    let n = 7;
 
     // Eliminação gaussiana é para resolver sistema onde
     // A * X = B
@@ -13,72 +11,44 @@ fn main() {
     // X é um vetor coluna de N posições
     // B é o resultado da multiplicação, um vetor de N valores
 
-    // O código original utiliza alocação estática para A, B e X.
-    // Eu utilizarei inicialmente alocação dinâmica no heap
-
     let (mut A, mut B, mut X) = create_values(n);
 
-    // Teste rápido
-    /*
-    Sistema:
-    2x + 3y = 10
-    1x + 4y = 10
 
-    A
-    |2, 3|
-    |1, 4|
+    let before = Instant::now();
+    // gauss_solver_with_unsafe(&mut A, &mut B, &mut X);
+    // gauss_solver(&mut A, &mut B, &mut X);
+    gauss_solver_with_futures(&mut A, &mut B, &mut X);
+    let now = Instant::now();
 
-    B = |10, 10|
-
-    Resultado esperado de A*X=B
-    X = |2, 2|
-     */
-
-    A[0][0] = 2.0;
-    A[0][1] = 3.0;
-    A[1][0] = 1.0;
-    A[1][1] = 4.0;
-
-    B[0] = 10.0;
-    B[1] = 10.0;
-
-    println!("------- Normal -------");
-    println!("------- Antes -------");
-    A[0][0] = 2.0;
-    A[0][1] = 3.0;
-    A[1][0] = 1.0;
-    A[1][1] = 4.0;
-
-    B[0] = 10.0;
-    B[1] = 10.0;
-
-    X[0] = 0.0;
-    X[1] = 0.0;
-
-    gauss_solver_with_unsafe(&mut A, &mut B, &mut X);
-
-    // for linha in &A {
-    //     println!("{:?}", linha);
-    // }
-    // println!("B: {:?}", B);
     println!("X: {:?}", X);
+    show_time((now - before).borrow());
+}
+
+ fn show_time(duration: &Duration) {
+    let ms = duration.as_millis() % 1000;
+    let s = duration.as_secs() % 60;
+    let m = duration.as_secs() / 60 % 60;
+    let h = duration.as_secs() / 60 / 60;
+    println!("Total time: {}s", duration.as_secs_f64());
+    println!("\t{h:02}h:{m:02}m:{s:02}s:{ms:03}ms"); 
 }
 
 // Create the A, B and X values
 fn create_values(n: usize) -> (Vec<Vec<f64>>, Vec<f64>, Vec<f64>) {
-    let mut random = thread_rng();
+    // let mut random = thread_rng();
+    let mut r = StdRng::seed_from_u64(0);   // Reproducible random sequence
     let mut A: Vec<Vec<f64>> = Vec::new();
-    let mut B: Vec<f64> = vec![0.0; n];
-    let mut X: Vec<f64> = vec![0.0; n];
+    let B: Vec<f64> = vec![1.0; n];
+    let X: Vec<f64> = vec![0.0; n];
 
-    for row in 0..n {
+    for _ in 0..n {
         let mut temp = vec![0.0; n];
-        random.try_fill(&mut temp[..]);
+        r.try_fill(&mut temp[..]).unwrap();
         A.push(temp);
     }
 
-    random.try_fill(&mut B[..]);
-    random.try_fill(&mut X[..]);
+    // random.try_fill(&mut B[..]).unwrap();
+    // random.try_fill(&mut X[..]).unwrap();
     return (A, B, X);
 }
 
@@ -150,6 +120,50 @@ fn gauss_solver_with_unsafe(A: &mut Vec<Vec<f64>>, B: &mut Vec<f64>, X: &mut Vec
             thread.join().unwrap();
         }
     }
+
+    for row in (0..n).rev() {
+        X[row] = B[row];
+        for col in ((row + 1)..n).rev() {
+            X[row] -= A[row][col] * X[col];
+        }
+        X[row] /= A[row][row];
+    }
+}
+
+async fn gauss_solver_with_futures(A: &mut Vec<Vec<f64>>, B: &mut Vec<f64>, X: &mut Vec<f64>) {
+    // Tokio runtime starting
+    let tk = tokio::runtime::Builder::new_multi_thread()
+                            .build()
+                            .unwrap();
+    let n = A.len();
+
+    for norm_row in 0..n {
+        let mut tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+
+        let base_row = unsafe { &*A.as_ptr().offset(norm_row as isize) };
+
+        for ind_row in (norm_row + 1)..n {
+            // This part can be done in a Thread
+            let row_normalizing = unsafe { &mut *A.as_mut_ptr().offset(ind_row as isize) };
+            let multiplier = row_normalizing[norm_row] / base_row[norm_row];
+
+            let task = tk.spawn(async move {row_solver(row_normalizing, base_row, norm_row)});
+            
+            // let thread = thread::spawn(move || {
+            //     row_solver(row_normalizing, base_row, norm_row);
+            // });
+            // threads.push(thread);
+            tasks.push(task);
+            B[ind_row] -= multiplier * B[norm_row];
+        }
+
+        // wait for threads to finish
+        for task in tasks {
+            // task.await.unwrap();
+            tk.block_on(task).unwrap();
+        }
+    }
+    tk.shutdown_background();
 
     for row in (0..n).rev() {
         X[row] = B[row];

@@ -9,9 +9,9 @@ fn main() {
     // let (mut A, mut B, mut X) = create_values_array2d(n);
 
     let before = Instant::now();
-    gauss_solver_with_thread_pool_chunks(&mut A, &mut B, &mut X);
+    // gauss_solver_with_thread_pool_chunks(&mut A, &mut B, &mut X);
     // gauss_solver_with_threads(&mut A, &mut B, &mut X);
-    // gauss_solver(&mut A, &mut B, &mut X);
+    gauss_solver(&mut A, &mut B, &mut X);
     // gauss_solver_Array2D(&mut A, &mut B, &mut X);
     // gauss_solver_with_futures(&mut A, &mut B, &mut X);
     // gauss_solver_with_thread_pool(&mut A, &mut B, &mut X);
@@ -21,7 +21,7 @@ fn main() {
     show_time((now - before).borrow());
 }
 
- fn show_time(duration: &Duration) {
+fn show_time(duration: &Duration) {
     let ms = duration.as_millis() % 1000;
     let s = duration.as_secs() % 60;
     let m = duration.as_secs() / 60 % 60;
